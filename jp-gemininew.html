@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>日语学习工具 - Japanese Kana & Kanji</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 1. 引入 Kuroshiro (汉字转假名) -->
+    <script src="https://cdn.jsdelivr.net/npm/kuroshiro@1.2.0/dist/kuroshiro.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/kuroshiro-analyzer-kuromoji@1.1.0/dist/kuroshiro-analyzer-kuromoji.min.js"></script>
+    
+    <!-- 2. 引入 Tesseract.js (图片 OCR 识别) -->
+    <script src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js'></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap');
+        
+        body {
+            font-family: 'Noto Sans JP', sans-serif;
+            background-color: #fcfbf9;
+            color: #2d2d2d;
+        }
+
+        .kana-card {
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            border: 1px solid #e5e7eb;
+        }
+
+        .kana-card:hover:not(.empty-card) {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            border-color: #ef4444;
+        }
+
+        /* 选中状态的 Tab 样式 */
+        .active-tab {
+            background-color: #ef4444 !important;
+            color: white !important;
+            box-shadow: 0 4px 6px -1px rgba(239, 68, 68, 0.3);
+            border-color: #ef4444 !important;
+        }
+
+        .index-label {
+            color: #9ca3af;
+            font-size: 0.75rem;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .column-header {
+            color: #ef4444;
+            font-size: 0.875rem;
+            font-weight: bold;
+            text-align: center;
+            padding-bottom: 8px;
+        }
+
+        .loading-spinner {
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #ef4444;
+            border-radius: 50%;
+            width: 16px;
+            height: 16px;
+            animation: spin 1s linear infinite;
+        }
+
+        .semantic-slash {
+            color: #ef4444;
+            font-weight: bold;
+            margin: 0 4px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* 隐藏滚动条 */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        
+        /* 进度条动画 */
+        .progress-bar {
+            transition: width 0.3s ease;
+        }
+    </style>
+</head>
+<body class="pb-20">
+
+    <!-- OCR Overlay (全局遮罩层) -->
+    <div id="ocr-overlay" class="hidden fixed inset-0 bg-white/95 z-[100] flex flex-col items-center justify-center p-8 backdrop-blur-sm">
+        <div class="w-full max-w-xs bg-gray-200 rounded-full h-2.5 mb-4">
+            <div id="ocr-progress" class="progress-bar bg-red-600 h-2.5 rounded-full" style="width: 0%"></div>
+        </div>
+        <p id="ocr-status-text" class="text-sm font-bold text-gray-600 animate-pulse">正在初始化 OCR 引擎...</p>
+        <p class="text-xs text-gray-400 mt-2">首次加载可能需要下载语言包 (15MB+)</p>
+    </div>
+
+    <!-- Header -->
+    <header class="sticky top-0 z-50 bg-white/90 backdrop-blur-md border-b border-gray-100 px-4 py-3 shadow-sm">
+        <div class="flex justify-between items-center mb-4">
+            <h1 class="text-xl font-bold text-red-600 tracking-tight" data-i18n="title">五十音図</h1>
+            
+            <div class="flex items-center space-x-2">
+                <!-- 语言选择器 -->
+                <select id="lang-select" onchange="changeLanguage(this.value)" class="bg-gray-50 border border-gray-200 text-gray-700 text-xs rounded-full px-3 py-1 outline-none focus:ring-2 focus:ring-red-500">
+                    <option value="zh">简体中文</option>
+                    <option value="ja">日本語</option>
+                    <option value="en">English</option>
+                    <option value="fr">Français</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- 顶部导航栏 (4个按钮) -->
+        <nav class="grid grid-cols-4 gap-2">
+            <!-- 1. 汉字转假名 -->
+            <button onclick="switchTab('converter')" id="tab-converter" class="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-gray-50 border border-transparent text-gray-500 hover:bg-gray-100 transition-all text-xs font-medium">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" />
+                </svg>
+                <span data-i18n="tab_converter">汉字转换</span>
+            </button>
+
+            <!-- 2. Hiragana -->
+            <button onclick="switchTab('hira')" id="tab-hira" class="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-gray-50 border border-transparent text-gray-500 hover:bg-gray-100 transition-all text-xs font-medium active-tab">
+                <span class="text-lg font-bold leading-none mb-1">あ</span>
+                <span>Hiragana</span>
+            </button>
+
+            <!-- 3. Katakana -->
+            <button onclick="switchTab('kata')" id="tab-kata" class="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-gray-50 border border-transparent text-gray-500 hover:bg-gray-100 transition-all text-xs font-medium">
+                <span class="text-lg font-bold leading-none mb-1">ア</span>
+                <span>Katakana</span>
+            </button>
+
+            <!-- 4. 图片识别 (OCR) -->
+            <button onclick="switchTab('ocr')" id="tab-ocr" class="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-gray-50 border border-transparent text-gray-500 hover:bg-gray-100 transition-all text-xs font-medium">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                <span data-i18n="tab_ocr">图片识别</span>
+            </button>
+        </nav>
+        <!-- 隐藏的文件输入框 -->
+        <input type="file" id="image-upload" accept="image/*" class="hidden" onchange="handleImageUpload(this)">
+    </header>
+
+    <main class="max-w-3xl mx-auto px-4 mt-6">
+        
+        <!-- 视图 1: 汉字转假名工具 -->
+        <div id="view-converter" class="hidden">
+            <section class="bg-white p-6 rounded-3xl shadow-lg border-2 border-red-50 flex flex-col h-full">
+                <div class="text-center mb-6">
+                    <h2 class="text-lg font-bold text-gray-800" data-i18n="converter_title">汉字转假名 & 朗读</h2>
+                    <p class="text-xs text-gray-400 mt-1" data-i18n="converter_desc">输入日文，AI 将为你标注假名并朗读。</p>
+                </div>
+
+                <div class="space-y-4">
+                    <textarea id="kanji-input" rows="4" class="w-full p-4 border border-gray-100 rounded-2xl focus:ring-2 focus:ring-red-500 outline-none bg-gray-50/50 text-lg" data-i18n-placeholder="input_placeholder" placeholder="输入日语汉字..."></textarea>
+                    
+                    <div id="converter-status" class="text-[10px] text-gray-400 flex items-center justify-center">
+                        <div class="loading-spinner mr-2" id="init-loader"></div>
+                        <span id="status-text" data-i18n="status_loading">正在初始化解析引擎...</span>
+                    </div>
+
+                    <!-- 按钮区域 -->
+                    <div class="flex flex-col sm:flex-row gap-3">
+                        <div class="flex flex-1 gap-3">
+                            <!-- 1. 纯转换按钮 -->
+                            <button id="btn-convert" disabled onclick="convertOnly()" class="flex-1 bg-red-600 hover:bg-red-700 disabled:bg-gray-200 text-white font-bold py-3 rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center text-sm">
+                                <span data-i18n="btn_convert_only">转换</span>
+                            </button>
+                            
+                            <!-- 2. 朗读/停止 切换按钮 -->
+                            <button id="btn-read-toggle" disabled onclick="toggleReading()" class="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-200 text-white font-bold py-3 rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center text-sm">
+                                <svg id="icon-play" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                                </svg>
+                                <svg id="icon-stop" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1 hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                                </svg>
+                                <span id="text-read-btn" data-i18n="btn_read">朗读</span>
+                            </button>
+                        </div>
+
+                        <div class="flex gap-3">
+                            <!-- 3. 倍速选择 (汉字转换专用) -->
+                            <div class="relative flex items-center bg-gray-50 border border-gray-200 rounded-xl px-2">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-400 absolute left-2 pointer-events-none" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd" />
+                                </svg>
+                                <select id="rate-select-converter" class="bg-transparent text-gray-700 text-xs py-3 pl-6 pr-2 outline-none cursor-pointer w-full appearance-none">
+                                    <option value="0.5">0.5x</option>
+                                    <option value="0.75">0.75x</option>
+                                    <option value="0.85" selected>0.85x</option>
+                                    <option value="1">1.0x</option>
+                                    <option value="1.25">1.25x</option>
+                                </select>
+                            </div>
+
+                            <!-- 4. 清除按钮 -->
+                            <button onclick="clearText()" class="px-4 py-3 bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold rounded-xl transition-colors text-sm">
+                                <span data-i18n="btn_clear">清除</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 结果区域 -->
+                    <div id="result-box" class="hidden space-y-4 mt-4">
+                        <div class="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
+                            <div class="flex items-center justify-between border-b border-gray-100 pb-2 mb-3">
+                                <p class="text-[10px] text-gray-400 uppercase font-bold tracking-widest" data-i18n="result_annotation">Annotation / 注音</p>
+                            </div>
+                            <div id="output-interlinear" class="flex flex-wrap gap-x-2 gap-y-4 items-end"></div>
+                        </div>
+
+                        <div class="p-5 bg-red-50/30 rounded-2xl border border-red-100">
+                            <div class="flex items-center justify-between border-b border-red-100 pb-2">
+                                <p class="text-[10px] text-gray-400 uppercase font-bold tracking-widest" data-i18n="result_kana">Furigana / 假名</p>
+                                <span class="text-[10px] bg-white text-red-600 px-2 py-0.5 rounded-full font-bold border border-red-100 shadow-sm">文節切分版</span>
+                            </div>
+                            <div id="output-hira" class="text-xl text-red-600 font-bold leading-relaxed whitespace-pre-wrap break-words mt-2"></div>
+                            
+                            <div class="pt-2 mt-2 border-t border-red-100/50">
+                                <p class="text-[10px] text-gray-400 uppercase font-bold tracking-widest mb-1" data-i18n="result_roma">Romaji / 罗马音</p>
+                                <div id="output-roma" class="text-lg text-gray-700 italic leading-relaxed whitespace-pre-wrap break-words font-light"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- 视图 4: 专用 OCR 识别页面 -->
+        <div id="view-ocr" class="hidden space-y-6">
+            <!-- 1. 上传区域 -->
+            <div id="ocr-upload-area" onclick="triggerOCR()" class="border-2 border-dashed border-red-200 rounded-3xl p-10 flex flex-col items-center justify-center bg-red-50/30 cursor-pointer hover:bg-red-50 transition-colors min-h-[300px]">
+                <div class="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-sm mb-4 text-red-500">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                </div>
+                <h3 class="text-lg font-bold text-gray-700 mb-2" data-i18n="ocr_upload_title">点击上传或拍照</h3>
+                <p class="text-xs text-gray-400" data-i18n="ocr_upload_desc">支持日文图片识别</p>
+            </div>
+
+            <!-- 2. 结果显示区域 -->
+            <div id="ocr-result-container" class="hidden">
+                <!-- 图片预览卡片 -->
+                <div class="bg-white p-4 rounded-3xl shadow-sm border border-gray-100 mb-6">
+                    <img id="ocr-preview-image" src="" alt="Preview" class="w-full h-auto max-h-64 object-contain rounded-xl mb-4 bg-gray-50">
+                    
+                    <!-- 进度条 -->
+                    <div id="ocr-progress-container" class="w-full">
+                        <div class="flex justify-between text-xs text-gray-500 mb-1">
+                            <span id="ocr-status-label">正在初始化...</span>
+                            <span id="ocr-percent">0%</span>
+                        </div>
+                        <div class="w-full bg-gray-100 rounded-full h-2">
+                            <div id="ocr-progress-bar" class="bg-red-500 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+                        </div>
+                    </div>
+
+                    <!-- 控制栏：重传 + 倍速 -->
+                    <div class="flex items-center justify-between mt-4">
+                        <!-- OCR 专用语速选择器 -->
+                        <div class="flex items-center bg-gray-50 border border-gray-200 rounded-xl px-2">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-400 mr-1" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd" />
+                            </svg>
+                            <select id="rate-select-ocr" class="bg-transparent text-gray-700 text-xs py-2 outline-none cursor-pointer">
+                                <option value="0.5">0.5x</option>
+                                <option value="0.75">0.75x</option>
+                                <option value="0.85" selected>0.85x</option>
+                                <option value="1">1.0x</option>
+                                <option value="1.25">1.25x</option>
+                            </select>
+                        </div>
+
+                        <!-- 重新上传按钮 -->
+                        <button id="btn-reupload" onclick="resetOCR()" class="hidden py-2 px-4 bg-gray-100 text-gray-600 rounded-xl text-xs font-bold hover:bg-gray-200 transition-colors">
+                            <span data-i18n="btn_reupload">识别另一张</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 识别结果列表 -->
+                <div id="ocr-parsed-results" class="space-y-4"></div>
+            </div>
+        </div>
+
+        <!-- 视图 2 & 3: 五十音图表 -->
+        <div id="view-chart" class="space-y-8 pb-12">
+            <!-- 提示条 -->
+            <div class="bg-blue-50 text-blue-600 px-4 py-3 rounded-xl flex items-center justify-between text-xs">
+                <span class="font-bold flex items-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span id="mode-indicator">当前显示：Hiragana (平假名)</span>
+                </span>
+            </div>
+
+            <!-- 1. 清音部分 -->
+            <section class="bg-white p-4 sm:p-6 rounded-3xl shadow-sm border border-gray-50">
+                <h2 class="text-lg font-bold mb-6 flex items-center">
+                    <span class="w-1.5 h-6 bg-red-500 rounded-full mr-3"></span>
+                    <span data-i18n="seion">清音 (Seion)</span>
+                </h2>
+                <div class="grid grid-cols-[25px_1fr_1fr_1fr_1fr_1fr] sm:grid-cols-[35px_1fr_1fr_1fr_1fr_1fr] gap-1 sm:gap-2 items-center text-center">
+                    <div></div>
+                    <div class="column-header text-lg">a</div>
+                    <div class="column-header text-lg">i</div>
+                    <div class="column-header text-lg">u</div>
+                    <div class="column-header text-lg">e</div>
+                    <div class="column-header text-lg">o</div>
+                    <div id="grid-seion" class="contents"></div>
+                </div>
+            </section>
+
+            <!-- 2. 浊音 & 半浊音 -->
+            <section class="bg-white p-4 sm:p-6 rounded-3xl shadow-sm border border-gray-50">
+                <h2 class="text-lg font-bold mb-6 flex items-center">
+                    <span class="w-1.5 h-6 bg-orange-500 rounded-full mr-3"></span>
+                    <span data-i18n="dakuon">浊音 (Dakuon)</span>
+                </h2>
+                <div class="grid grid-cols-[25px_1fr_1fr_1fr_1fr_1fr] sm:grid-cols-[35px_1fr_1fr_1fr_1fr_1fr] gap-1 sm:gap-2 items-center text-center">
+                    <div></div>
+                    <div class="column-header text-lg">a</div>
+                    <div class="column-header text-lg">i</div>
+                    <div class="column-header text-lg">u</div>
+                    <div class="column-header text-lg">e</div>
+                    <div class="column-header text-lg">o</div>
+                    <div id="grid-dakuon" class="contents"></div>
+                </div>
+            </section>
+
+            <!-- 3. 拗音部分 -->
+            <section class="bg-white p-4 sm:p-6 rounded-3xl shadow-sm border border-gray-50">
+                <h2 class="text-lg font-bold mb-6 flex items-center">
+                    <span class="w-1.5 h-6 bg-blue-500 rounded-full mr-3"></span>
+                    <span data-i18n="youon">拗音 (Youon)</span>
+                </h2>
+                <div class="grid grid-cols-[35px_1fr_1fr_1fr] sm:grid-cols-[45px_1fr_1fr_1fr] gap-1 sm:gap-2 items-center text-center">
+                    <div></div>
+                    <div class="column-header text-lg italic">ya</div>
+                    <div class="column-header text-lg italic">yu</div>
+                    <div class="column-header text-lg italic">yo</div>
+                    <div id="grid-youon" class="contents"></div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <script>
+        // --- 国际化数据 ---
+        const translations = {
+            zh: {
+                title: "五十音図",
+                seion: "清音 (Seion)",
+                dakuon: "浊音 (Dakuon)",
+                youon: "拗音 (Youon)",
+                converter_title: "汉字转假名 & 朗读",
+                converter_desc: "输入日文，AI 将为你标注假名并朗读。",
+                input_placeholder: "输入日语汉字...",
+                status_loading: "正在初始化解析引擎...",
+                status_ready: "引擎就绪，请开始。",
+                status_error: "初始化失败，请尝试刷新。",
+                btn_convert_only: "转换",
+                btn_read: "朗读",
+                btn_stop: "停止",
+                btn_clear: "清除",
+                tab_converter: "汉字转换",
+                tab_ocr: "图片识别",
+                result_kana: "Furigana / 假名",
+                result_roma: "Romaji / 罗马音",
+                result_annotation: "注音 (Interlinear)",
+                ocr_upload_title: "点击上传或拍照",
+                ocr_upload_desc: "支持日文图片识别",
+                ocr_init: "正在加载 OCR 引擎...",
+                ocr_proc: "正在识别文字: ",
+                ocr_done: "解析完成！",
+                btn_reupload: "识别另一张",
+                mode_hira: "当前显示：Hiragana (平假名)",
+                mode_kata: "当前显示：Katakana (片假名)"
+            },
+            ja: {
+                title: "五十音図",
+                seion: "清音",
+                dakuon: "濁音・半濁音",
+                youon: "拗音",
+                converter_title: "漢字読み上げくん",
+                converter_desc: "日本語を入力すると、AIがふりがなを振って読み上げます。",
+                input_placeholder: "日本語を入力してください...",
+                status_loading: "エンジンを初期化中...",
+                status_ready: "準備完了。",
+                status_error: "初期化に失敗しました。",
+                btn_convert_only: "変換",
+                btn_read: "読み上げ",
+                btn_stop: "停止",
+                btn_clear: "クリア",
+                tab_converter: "ふりがな",
+                tab_ocr: "写真OCR",
+                result_kana: "ふりがな",
+                result_roma: "ローマ字",
+                result_annotation: "注釈 (Interlinear)",
+                ocr_upload_title: "タップして写真をアップロード",
+                ocr_upload_desc: "日本語の文字認識に対応",
+                ocr_init: "OCRエンジンをロード中...",
+                ocr_proc: "文字を認識中: ",
+                ocr_done: "解析完了！",
+                btn_reupload: "他の画像を認識",
+                mode_hira: "表示中：ひらがな",
+                mode_kata: "表示中：カタカナ"
+            },
+            en: {
+                title: "Gojuon Chart",
+                seion: "Seion (Clear)",
+                dakuon: "Dakuon (Voiced)",
+                youon: "Youon (Contracted)",
+                converter_title: "Kanji to Furigana",
+                converter_desc: "Enter Japanese text, AI will annotate and read it aloud.",
+                input_placeholder: "Enter Japanese text...",
+                status_loading: "Initializing...",
+                status_ready: "Ready.",
+                status_error: "Initialization failed.",
+                btn_convert_only: "Convert",
+                btn_read: "Read",
+                btn_stop: "Stop",
+                btn_clear: "Clear",
+                tab_converter: "Converter",
+                tab_ocr: "Photo OCR",
+                result_kana: "Furigana / Kana",
+                result_roma: "Romaji",
+                result_annotation: "Interlinear",
+                ocr_upload_title: "Click to upload or take photo",
+                ocr_upload_desc: "Supports Japanese OCR",
+                ocr_init: "Loading OCR engine...",
+                ocr_proc: "Recognizing text: ",
+                ocr_done: "Parsing complete!",
+                btn_reupload: "Scan Another",
+                mode_hira: "View: Hiragana",
+                mode_kata: "View: Katakana"
+            },
+            fr: {
+                title: "Tableau Gojuon",
+                seion: "Seion (Clair)",
+                dakuon: "Dakuon (Voisé)",
+                youon: "Youon (Contracté)",
+                converter_title: "Kanji vers Furigana",
+                converter_desc: "Entrez du texte japonais, l'IA l'annotera et le lira.",
+                input_placeholder: "Entrez du texte japonais...",
+                status_loading: "Initialisation...",
+                status_ready: "Prêt.",
+                status_error: "Échec.",
+                btn_convert_only: "Convertir",
+                btn_read: "Lire",
+                btn_stop: "Arrêt",
+                btn_clear: "Effacer",
+                tab_converter: "Convertisseur",
+                tab_ocr: "OCR Photo",
+                result_kana: "Furigana / Kana",
+                result_roma: "Romaji",
+                result_annotation: "Interlinéaire",
+                ocr_upload_title: "Cliquez pour télécharger ou prendre une photo",
+                ocr_upload_desc: "Prend en charge l'OCR japonais",
+                ocr_init: "Chargement de l'OCR...",
+                ocr_proc: "Reconnaissance: ",
+                ocr_done: "Analyse terminée !",
+                btn_reupload: "Scanner un autre",
+                mode_hira: "Vue: Hiragana",
+                mode_kata: "Vue: Katakana"
+            }
+        };
+
+        const seionGroups = [
+            { label: '', data: [['あ', 'ア', 'a'], ['い', 'イ', 'i'], ['う', 'ウ', 'u'], ['え', 'エ', 'e'], ['お', 'オ', 'o']] },
+            { label: 'k', data: [['か', 'カ', 'ka'], ['き', 'キ', 'ki'], ['く', 'ク', 'ku'], ['け', 'ケ', 'ke'], ['こ', 'コ', 'ko']] },
+            { label: 's', data: [['さ', 'サ', 'sa'], ['し', 'シ', 'shi'], ['す', 'ス', 'su'], ['せ', 'セ', 'se'], ['そ', 'ソ', 'so']] },
+            { label: 't', data: [['た', 'タ', 'ta'], ['ち', 'チ', 'chi'], ['つ', 'ツ', 'tsu'], ['て', 'テ', 'te'], ['と', 'ト', 'to']] },
+            { label: 'n', data: [['な', 'ナ', 'na'], ['に', 'ニ', 'ni'], ['ぬ', 'ヌ', 'nu'], ['ね', 'ネ', 'ne'], ['の', 'ノ', 'no']] },
+            { label: 'h', data: [['は', 'ハ', 'ha'], ['ひ', 'ヒ', 'hi'], ['ふ', 'フ', 'fu'], ['へ', 'ヘ', 'he'], ['ほ', 'ホ', 'ho']] },
+            { label: 'm', data: [['ま', 'マ', 'ma'], ['み', 'ミ', 'mi'], ['む', 'ム', 'mu'], ['め', 'メ', 'me'], ['も', 'モ', 'mo']] },
+            { label: 'y', data: [['や', 'ヤ', 'ya'], null, ['ゆ', 'ユ', 'yu'], null, ['よ', 'ヨ', 'yo']] },
+            { label: 'r', data: [['ら', 'ラ', 'ra'], ['り', 'リ', 'ri'], ['る', 'ル', 'ru'], ['れ', 'レ', 're'], ['ろ', 'ロ', 'ro']] },
+            { label: 'w', data: [['わ', 'ワ', 'wa'], null, null, null, ['を', 'ヲ', 'wo']] },
+            { label: 'n', data: [['ん', 'ン', 'n'], null, null, null, null] }
+        ];
+
+        const dakuonGroups = [
+            { label: 'g', data: [['が', 'ガ', 'ga'], ['ぎ', 'ギ', 'gi'], ['ぐ', 'グ', 'gu'], ['げ', 'ゲ', 'ge'], ['ご', 'ゴ', 'go']] },
+            { label: 'z', data: [['ざ', 'ザ', 'za'], ['じ', 'ジ', 'ji'], ['ず', 'ズ', 'zu'], ['ぜ', 'ゼ', 'ze'], ['ぞ', 'ゾ', 'zo']] },
+            { label: 'd', data: [['だ', 'ダ', 'da'], ['ぢ', 'ヂ', 'ji'], ['づ', 'ヅ', 'zu'], ['で', 'デ', 'de'], ['ど', 'ド', 'do']] },
+            { label: 'b', data: [['ば', 'バ', 'ba'], ['び', 'ビ', 'bi'], ['ぶ', 'ブ', 'bu'], ['べ', 'ベ', 'be'], ['ぼ', 'ボ', 'bo']] },
+            { label: 'p', data: [['ぱ', 'パ', 'pa'], ['ぴ', 'ピ', 'pi'], ['ぷ', 'プ', 'pu'], ['ぺ', 'ペ', 'pe'], ['ぽ', 'ポ', 'po']] }
+        ];
+
+        const youonGroups = [
+            { label: 'ky', data: [['きゃ', 'キャ', 'kya'], ['きゅ', 'キュ', 'kyu'], ['きょ', 'キョ', 'kyo']] },
+            { label: 'sh', data: [['しゃ', 'シャ', 'sha'], ['しゅ', 'シュ', 'shu'], ['しょ', 'ショ', 'sho']] },
+            { label: 'ch', data: [['ちゃ', 'チャ', 'cha'], ['ちゅ', 'チュ', 'chu'], ['ちょ', 'チョ', 'cho']] },
+            { label: 'ny', data: [['にゃ', 'ニャ', 'nya'], ['にゅ', 'ニュ', 'nyu'], ['にょ', 'ニョ', 'nyo']] },
+            { label: 'hy', data: [['ひゃ', 'ヒャ', 'hya'], ['ひゅ', 'ヒュ', 'hyu'], ['ひょ', 'ヒョ', 'hyo']] },
+            { label: 'my', data: [['みゃ', 'ミャ', 'mya'], ['みゅ', 'ミュ', 'myu'], ['みょ', 'ミョ', 'myo']] },
+            { label: 'ry', data: [['りゃ', 'リャ', 'rya'], ['りゅ', 'リュ', 'ryu'], ['りょ', 'リョ', 'ryo']] },
+            { label: 'gy', data: [['ぎゃ', 'ギャ', 'gya'], ['ぎゅ', 'ギュ', 'gyu'], ['ぎょ', 'ギョ', 'gyo']] },
+            { label: 'ja', data: [['じゃ', 'ジャ', 'ja'], ['じゅ', 'ジュ', 'ju'], ['じょ', 'ジョ', 'jo']] },
+            { label: 'by', data: [['びゃ', 'ビャ', 'bya'], ['びゅ', 'ビュ', 'byu'], ['びょ', 'ビョ', 'byo']] },
+            { label: 'py', data: [['ぴゃ', 'ピャ', 'pya'], ['ぴゅ', 'ピュ', 'pyu'], ['ぴょ', 'ピョ', 'pyo']] }
+        ];
+
+        let currentMode = 'hira';
+        let kuroshiroInstance = null;
+        let isAnalyzerReady = false;
+        let currentAnalyzer = null;
+
+        async function initAnalyzer() {
+            try {
+                if (typeof Kuroshiro === 'undefined' || typeof KuromojiAnalyzer === 'undefined') {
+                    setTimeout(initAnalyzer, 500);
+                    return;
+                }
+                kuroshiroInstance = new Kuroshiro.default ? new Kuroshiro.default() : new Kuroshiro();
+                currentAnalyzer = new KuromojiAnalyzer({ dictPath: "https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/dict" });
+                await kuroshiroInstance.init(currentAnalyzer);
+                isAnalyzerReady = true;
+                document.getElementById('init-loader').classList.add('hidden');
+                document.getElementById('status-text').innerText = translations[document.getElementById('lang-select').value].status_ready;
+                document.getElementById('btn-convert').disabled = false;
+                document.getElementById('btn-read-toggle').disabled = false;
+            } catch (err) {
+                console.error("Init Error:", err);
+                document.getElementById('status-text').innerText = translations[document.getElementById('lang-select').value].status_error;
+            }
+        }
+
+        async function getSmartBunsetsu(text, targetType, useSlash = true) {
+            let tokens = [];
+            let rawTokenizer = null;
+            if (kuroshiroInstance._analyzer && kuroshiroInstance._analyzer._analyzer) {
+                rawTokenizer = kuroshiroInstance._analyzer._analyzer;
+            } else if (currentAnalyzer && currentAnalyzer._analyzer) {
+                rawTokenizer = currentAnalyzer._analyzer;
+            }
+
+            if (rawTokenizer && typeof rawTokenizer.tokenize === 'function') {
+                tokens = rawTokenizer.tokenize(text);
+            } else {
+                return await kuroshiroInstance.convert(text, { to: targetType, romajiSystem: "hepburn" });
+            }
+
+            let result = "";
+            for (let i = 0; i < tokens.length; i++) {
+                const token = tokens[i];
+                const nextToken = tokens[i+1];
+                let converted = await kuroshiroInstance.convert(token.surface_form, { to: targetType, romajiSystem: "hepburn" });
+                
+                if (token.pos === '記号' && targetType === 'romaji') {
+                    if (token.surface_form === '。') converted = '.';
+                    if (token.surface_form === '、') converted = ',';
+                }
+
+                result += converted;
+
+                if (nextToken) {
+                    const surface = token.surface_form;
+                    const pos = token.pos;
+                    const nextPos = nextToken.pos;
+                    const isPunctuation = pos === '記号';
+                    const isConjunction = pos === '接続詞';
+                    const strongParticles = ['は', 'が', 'を', 'に', 'へ', 'で', 'と', 'から', 'より', 'まで', 'も', 'ね', 'よ'];
+                    const isStrongParticle = pos === '助詞' && strongParticles.includes(surface);
+                    const isTeForm = (surface.endsWith('て') || surface.endsWith('で')) && (pos === '動詞' || pos === '助動詞');
+
+                    if (isPunctuation || isStrongParticle || isConjunction || isTeForm) {
+                        if (useSlash) {
+                            result += `<span class="semantic-slash">/</span>`;
+                        } else {
+                            result += " "; 
+                        }
+                    } else {
+                        const isNextIndependent = nextPos === '名詞' || nextPos === '動詞' || nextPos === '形容詞' || nextPos === '副詞' || nextPos === '連体詞' || nextPos === '感動詞';
+                        if (isNextIndependent && pos !== '接頭詞') result += " ";
+                    }
+                }
+            }
+            return result.replace(/\s+/g, ' ').trim();
+        }
+
+        async function renderInterlinear(text) {
+            let tokens = [];
+            let rawTokenizer = null;
+            if (kuroshiroInstance._analyzer && kuroshiroInstance._analyzer._analyzer) {
+                rawTokenizer = kuroshiroInstance._analyzer._analyzer;
+            } else if (currentAnalyzer && currentAnalyzer._analyzer) {
+                rawTokenizer = currentAnalyzer._analyzer;
+            }
+
+            if (rawTokenizer && typeof rawTokenizer.tokenize === 'function') {
+                tokens = rawTokenizer.tokenize(text);
+            } else {
+                return ""; 
+            }
+
+            let html = "";
+            for (let i = 0; i < tokens.length; i++) {
+                const token = tokens[i];
+                const surface = token.surface_form;
+                
+                const [hira, roma] = await Promise.all([
+                    kuroshiroInstance.convert(surface, { to: "hiragana" }),
+                    kuroshiroInstance.convert(surface, { to: "romaji", romajiSystem: "hepburn" })
+                ]);
+
+                html += `
+                    <div class="flex flex-col items-center mx-1">
+                        <span class="text-xs text-red-500 font-medium">${hira}</span>
+                        <span class="text-[10px] text-gray-400 mb-0.5">${roma}</span>
+                        <span class="text-lg font-bold text-gray-800 border-b border-gray-100 pb-0.5">${surface}</span>
+                    </div>
+                `;
+            }
+            return html;
+        }
+
+        // --- 核心功能：纯转换 (无朗读) ---
+        async function convertOnly() {
+            const input = document.getElementById('kanji-input').value;
+            if (!input.trim() || !isAnalyzerReady) return;
+            try {
+                // 1. 常规线性文本 (带文节切分)
+                const hiraResult = await getSmartBunsetsu(input, "hiragana", true);
+                const romaResult = await getSmartBunsetsu(input, "romaji", true);
+                
+                document.getElementById('output-hira').innerHTML = hiraResult;
+                document.getElementById('output-roma').innerHTML = romaResult;
+
+                // 2. 逐词注音渲染
+                const interlinearHtml = await renderInterlinear(input);
+                document.getElementById('output-interlinear').innerHTML = interlinearHtml;
+
+                document.getElementById('result-box').classList.remove('hidden');
+                
+            } catch (err) { console.error("Convert Error:", err); }
+        }
+
+        // --- 核心功能：朗读切换 (汉字转换) ---
+        function toggleReading() {
+            const input = document.getElementById('kanji-input').value;
+            const btnText = document.getElementById('text-read-btn');
+            const iconPlay = document.getElementById('icon-play');
+            const iconStop = document.getElementById('icon-stop');
+            const lang = document.getElementById('lang-select').value;
+            const t = translations[lang];
+
+            if (window.speechSynthesis.speaking) {
+                window.speechSynthesis.cancel();
+                btnText.innerText = t.btn_read;
+                iconPlay.classList.remove('hidden');
+                iconStop.classList.add('hidden');
+            } else {
+                if (!input.trim()) return;
+                
+                window.speechSynthesis.cancel(); // 确保之前的朗读已停止
+                const utterance = new SpeechSynthesisUtterance(input);
+                utterance.lang = 'ja-JP';
+                
+                // 读取汉字转换专用的语速选择器
+                const rateSelect = document.getElementById('rate-select-converter');
+                utterance.rate = rateSelect ? parseFloat(rateSelect.value) : 1.0;
+                
+                utterance.onend = () => {
+                    btnText.innerText = t.btn_read;
+                    iconPlay.classList.remove('hidden');
+                    iconStop.classList.add('hidden');
+                };
+
+                // UI 变更为停止状态
+                btnText.innerText = t.btn_stop;
+                iconPlay.classList.add('hidden');
+                iconStop.classList.remove('hidden');
+                
+                window.speechSynthesis.speak(utterance);
+            }
+        }
+
+        // --- 图片 OCR 逻辑 ---
+        function triggerOCR() {
+            document.getElementById('image-upload').click();
+        }
+
+        function resetOCR() {
+            document.getElementById('ocr-upload-area').classList.remove('hidden');
+            document.getElementById('ocr-result-container').classList.add('hidden');
+            document.getElementById('image-upload').value = '';
+            document.getElementById('ocr-parsed-results').innerHTML = '';
+        }
+
+        async function handleImageUpload(input) {
+            const file = input.files[0];
+            if (!file) return;
+
+            switchTab('ocr');
+            document.getElementById('ocr-upload-area').classList.add('hidden');
+            document.getElementById('ocr-result-container').classList.remove('hidden');
+            
+            const imgPreview = document.getElementById('ocr-preview-image');
+            imgPreview.src = URL.createObjectURL(file);
+            
+            const progressBar = document.getElementById('ocr-progress-bar');
+            const statusLabel = document.getElementById('ocr-status-label');
+            const percentLabel = document.getElementById('ocr-percent');
+            const reuploadBtn = document.getElementById('btn-reupload');
+            
+            const lang = document.getElementById('lang-select').value;
+            const t = translations[lang];
+
+            reuploadBtn.classList.add('hidden');
+            progressBar.style.width = '5%';
+            statusLabel.innerText = t.ocr_init;
+
+            try {
+                const { data: { text } } = await Tesseract.recognize(
+                    file, 'jpn', 
+                    { logger: m => {
+                        if (m.status === 'recognizing text') {
+                            const p = Math.round(m.progress * 100);
+                            progressBar.style.width = p + '%';
+                            percentLabel.innerText = p + '%';
+                            statusLabel.innerText = t.ocr_proc;
+                        }
+                    }}
+                );
+
+                statusLabel.innerText = t.ocr_done; 
+                reuploadBtn.classList.remove('hidden');
+
+                const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+                const resultsContainer = document.getElementById('ocr-parsed-results');
+                resultsContainer.innerHTML = '';
+
+                for (let i = 0; i < lines.length; i++) {
+                    const lineText = lines[i];
+                    
+                    const interlinearHtml = await renderInterlinear(lineText);
+
+                    const card = document.createElement('div');
+                    card.className = "bg-white p-4 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow";
+                    
+                    // 修改布局：按钮放在顶部，文本在下方独占一行
+                    // 注意：播放按钮调用 playSound(..., 'ocr') 传递 'ocr' 上下文
+                    card.innerHTML = `
+                        <div class="flex flex-col">
+                            <!-- 顶部工具栏：播放和停止按钮 -->
+                            <div class="flex justify-end space-x-2 mb-3 pb-2 border-b border-gray-50">
+                                <button onclick="playSound('${lineText.replace(/'/g, "\\'")}', 'ocr')" class="text-blue-500 bg-blue-50 p-2 rounded-full hover:bg-blue-100 transition-colors" title="Play">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd" />
+                                    </svg>
+                                </button>
+                                <button onclick="window.speechSynthesis.cancel()" class="text-red-500 bg-red-50 p-2 rounded-full hover:bg-red-100 transition-colors" title="Stop">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd" />
+                                    </svg>
+                                </button>
+                            </div>
+                            
+                            <!-- 逐词对齐内容 (Full Width) -->
+                            <div class="flex flex-wrap gap-x-2 gap-y-4 items-end w-full">${interlinearHtml}</div>
+                        </div>
+                    `;
+                    resultsContainer.appendChild(card);
+                }
+            } catch (err) {
+                console.error(err);
+                statusLabel.innerText = "Error: " + err.message;
+                statusLabel.classList.add('text-red-500');
+                reuploadBtn.classList.remove('hidden');
+            }
+        }
+
+        function switchTab(tabName) {
+            document.querySelectorAll('nav button').forEach(btn => {
+                btn.classList.remove('active-tab', 'text-red-600', 'bg-red-50');
+                btn.classList.add('text-gray-500', 'bg-gray-50');
+            });
+
+            const activeBtn = document.getElementById('tab-' + tabName);
+            if(activeBtn) {
+                activeBtn.classList.add('active-tab');
+                activeBtn.classList.remove('text-gray-500', 'bg-gray-50');
+            }
+
+            if (tabName === 'ocr' && document.getElementById('ocr-result-container').classList.contains('hidden')) {
+                 document.getElementById('view-converter').classList.add('hidden');
+                 document.getElementById('view-chart').classList.add('hidden');
+                 document.getElementById('view-ocr').classList.remove('hidden');
+                 return;
+            }
+
+            const converterView = document.getElementById('view-converter');
+            const chartView = document.getElementById('view-chart');
+            const ocrView = document.getElementById('view-ocr');
+            const indicator = document.getElementById('mode-indicator');
+            const lang = document.getElementById('lang-select').value;
+
+            converterView.classList.add('hidden');
+            chartView.classList.add('hidden');
+            ocrView.classList.add('hidden');
+
+            if (tabName === 'converter') {
+                converterView.classList.remove('hidden');
+            } else if (tabName === 'ocr') {
+                ocrView.classList.remove('hidden');
+            } else {
+                chartView.classList.remove('hidden');
+                currentMode = tabName; 
+                renderAll();
+                if (translations[lang]) {
+                    indicator.innerText = tabName === 'hira' ? translations[lang].mode_hira : translations[lang].mode_kata;
+                }
+            }
+        }
+
+        function changeLanguage(lang) {
+            const t = translations[lang];
+            
+            // 静态文本
+            document.querySelectorAll('[data-i18n]').forEach(el => { el.innerText = t[el.getAttribute('data-i18n')]; });
+            document.querySelectorAll('[data-i18n-placeholder]').forEach(el => { el.placeholder = t[el.getAttribute('data-i18n-placeholder')]; });
+            
+            // 动态状态文本更新
+            if (isAnalyzerReady) document.getElementById('status-text').innerText = t.status_ready;
+            
+            // 朗读按钮状态 (如果在朗读中，需要更新为当前语言的“停止”)
+            const btnText = document.getElementById('text-read-btn');
+            if (window.speechSynthesis.speaking) {
+                btnText.innerText = t.btn_stop;
+            } else {
+                btnText.innerText = t.btn_read;
+            }
+
+            const indicator = document.getElementById('mode-indicator');
+            if (!document.getElementById('view-chart').classList.contains('hidden')) {
+                indicator.innerText = currentMode === 'hira' ? t.mode_hira : t.mode_kata;
+            }
+        }
+
+        function renderAll() {
+            renderTable('grid-seion', seionGroups);
+            renderTable('grid-dakuon', dakuonGroups);
+            renderTable('grid-youon', youonGroups);
+        }
+
+        function renderTable(containerId, groups) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+            groups.forEach(group => {
+                const labelDiv = document.createElement('div');
+                labelDiv.className = "index-label";
+                labelDiv.innerText = group.label;
+                container.appendChild(labelDiv);
+                group.data.forEach(item => {
+                    const card = document.createElement('div');
+                    if (!item) {
+                        card.className = "kana-card h-14 border-dashed border-gray-100 rounded-xl";
+                        container.appendChild(card);
+                        return;
+                    }
+                    const [hira, kata, roma] = item;
+                    const char = currentMode === 'hira' ? hira : kata;
+                    card.className = "kana-card bg-white h-14 rounded-xl flex flex-col items-center justify-center cursor-pointer shadow-sm border-gray-100";
+                    card.innerHTML = `<span class="text-xl font-bold">${char}</span><span class="text-[9px] text-gray-400">${roma.toLowerCase()}</span>`;
+                    // 五十音图点击：使用标准语速 (传入 'chart')
+                    card.onclick = () => playSound(char, 'chart');
+                    container.appendChild(card);
+                });
+            });
+        }
+
+        // 修改后的 playSound 函数：支持不同来源的语速控制
+        function playSound(text, source = 'chart') {
+            window.speechSynthesis.cancel(); // 停止当前所有朗读
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'ja-JP';
+            
+            let rate = 1.0;
+            if (source === 'ocr') {
+                // OCR 模式：读取 OCR 专属的语速选择器
+                const rateSelect = document.getElementById('rate-select-ocr');
+                rate = rateSelect ? parseFloat(rateSelect.value) : 1.0;
+            } else if (source === 'chart') {
+                // 五十音图模式：强制标准语速
+                rate = 1.0;
+            }
+            
+            utterance.rate = rate;
+            window.speechSynthesis.speak(utterance);
+        }
+
+        function clearText() {
+            document.getElementById('kanji-input').value = '';
+            document.getElementById('result-box').classList.add('hidden');
+        }
+
+        window.onload = () => {
+            renderAll();
+            initAnalyzer();
+            changeLanguage('zh');
+            switchTab('hira');
+        };
+    </script>
+</body>
+</html>
